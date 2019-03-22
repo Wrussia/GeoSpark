@@ -289,6 +289,37 @@ case class ST_IsValid(inputExpressions: Seq[Expression])
   override def children: Seq[Expression] = inputExpressions
 }
 
+case class ST_MakeValid(inputExpressions: Seq[Expression])
+  extends Expression with CodegenFallback with UserDataGeneratator {
+  override def nullable: Boolean = false
+
+  override def eval(input: InternalRow): Any = {
+    assert(inputExpressions.length == 1)
+
+    val geometry = GeometrySerializer.deserialize(inputExpressions(0).eval(input).asInstanceOf[ArrayData])
+
+    val polygonList = collection.mutable.ListBuffer[Geometry]()
+
+    geometry match {
+      case g: MultiPolygon =>
+        for (i <- 0 until g.getNumGeometries) {
+          val p = g.getGeometryN(i).asInstanceOf[Polygon]
+          for (polygon <- JTS.makeValid(p, false)) polygonList.append(polygon)
+        }
+      case g: Polygon => for (polygon <- JTS.makeValid(g, false))
+        polygonList.append(polygon)
+    }
+
+    polygonList.reduce(_.union(_))
+
+    return new GenericArrayData(GeometrySerializer.serialize(geometry))
+  }
+
+  override def dataType: DataType = new GeometryUDT()
+
+  override def children: Seq[Expression] = inputExpressions
+}
+
 /**
   * Test if Geometry is simple.
   *
